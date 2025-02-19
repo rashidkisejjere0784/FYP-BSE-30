@@ -1,10 +1,26 @@
+#include <OneWire.h> 
+#include <DallasTemperature.h>
+
+#define ONE_WIRE_BUS 4
+
+OneWire oneWire(ONE_WIRE_BUS);
+
+DallasTemperature sensors(&oneWire);
+
 void setup() {
   Serial.begin(9600);
   // Baud rate: 9600
+
+  sensors.begin(); // begin temperature sensor
 }
 
 void loop() {
   int sensorValue = analogRead(A0);  // Read the input on analog pin 0
+  sensors.requestTemperatures();
+
+  Serial.print("Temperature is: "); 
+  Serial.print(sensors.getTempCByIndex(1));
+  
 
   // Convert the analog reading (which goes from 0 to 1023) to a voltage (0 to 5V)
   float voltage = sensorValue * (5.0 / 1024.0);
@@ -26,5 +42,5 @@ void loop() {
     Serial.println("Error in reading");
   }
 
-  delay(500); // Delay to avoid excessive serial output
+  delay(1500); // Delay to avoid excessive serial output
 }
