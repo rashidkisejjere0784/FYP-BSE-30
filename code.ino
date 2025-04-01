@@ -3,6 +3,7 @@
 #include <LiquidCrystal.h>
 #include <OneWire.h> 
 #include <DallasTemperature.h>
+#include <SoftwareSerial.h>
 #define SensorPin 8
 
 unsigned long int avgValue;
@@ -14,6 +15,9 @@ int buf[10], temp;
 
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
+
+// Configure software serial port
+SoftwareSerial SIM900(7, 8); 
 
 float tdsValue = 0;
 
@@ -27,6 +31,27 @@ void setup() {
   gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
   gravityTds.begin();  //initialization
   sensors.begin(); // begin temperature sensor
+
+  SIM900.begin(9600);
+  // Give time to your GSM shield log on to network
+  delay(20000);
+
+  // Make the phone call
+  callSomeone();
+}
+
+void callSomeone() {
+  // REPLACE THE X's WITH THE NUMER YOU WANT TO DIAL
+  // USE INTERNATIONAL FORMAT CODE FOR MOBILE NUMBERS
+  SIM900.println("ATD + +256702512375;");
+  delay(100);
+  SIM900.println();
+  
+ // In this example, the call only last 30 seconds
+ // You can edit the phone call duration in the delay time
+  delay(30000);
+  // AT command to hang up
+  SIM900.println("ATH"); // hang up
 }
 
 void readSensorData() {
@@ -74,7 +99,7 @@ void loop() {
   Serial.println("ppm");
   
 
-  int sensorValue = analogRead(A3);  // Read the input on analog pin 0
+  int sensorValue = analogRead(A5);  // Read the input on analog pin 0
   // Convert the analog reading (which goes from 0 to 1023) to a voltage (0 to 5V)
   float voltage = sensorValue * (5.0 / 1024.0);
 
