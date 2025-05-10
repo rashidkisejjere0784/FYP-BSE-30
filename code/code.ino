@@ -1,0 +1,224 @@
+#include <EEPROM.h>
+#include "GravityTDS.h"
+#include <LiquidCrystal.h>
+#include <OneWire.h> 
+#include <DallasTemperature.h>
+#include <SoftwareSerial.h> // sim module
+#include <ArduinoJson.h>
+
+#define SensorPin 8
+#define ONE_WIRE_BUS 4
+#define TdsSensorPin A0
+
+StaticJsonBuffer<200> jsonBuffer; 
+
+unsigned long int avgValue;
+float b;
+int buf[10], temp;
+float tdsValue = 0;
+
+SoftwareSerial mySerial(9,10); // RX, TX pins for SIM900a
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+GravityTDS gravityTds;
+
+
+// JSON payload builder
+String buildSensorPayload(float temperature, float phValue, float turbidityVoltage, float conductivity) {
+  String payload = "{";
+  payload += "\"temperature\":" + String(temperature, 2) + ",";       // 2 decimal places
+  payload += "\"ph\":" + String(phValue, 2) + ",";
+  payload += "\"turbidity\":" + String(turbidityVoltage, 2) + ",";
+  payload += "\"conductivity\":" + String(conductivity, 2);
+  payload += "}";
+  return payload;
+}
+
+
+void setup() {
+  Serial.begin(9600);
+  // Baud rate: 9600
+  gravityTds.setPin(TdsSensorPin);
+  gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNO
+  gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
+  gravityTds.begin();  //initialization
+  sensors.begin(); // begin temperature sensor
+
+  // setup sim900
+  mySerial.begin(9600);
+  delay(2000);
+
+   DynamicJsonBuffer jsonBuffer;
+}
+
+
+void loop() {
+
+  sensors.requestTemperatures();
+  float temperature = sensors.getTempCByIndex(0);
+
+  Serial.print("Temperature is: "); 
+  Serial.print(temperature);
+  Serial.println("");
+
+  gravityTds.setTemperature(sensors.getTempCByIndex(0));  // set the temperature and execute temperature compensation
+  gravityTds.update();  //sample and calculate
+  tdsValue = gravityTds.getTdsValue();  // then get the value
+  
+  Serial.print(tdsValue,0);
+  Serial.println("ppm");
+  
+
+  int sensorValue = analogRead(A3);  // Read the input on analog pin 0
+  // Convert the analog reading (which goes from 0 to 1023) to a voltage (0 to 5V)
+  float voltage = sensorValue * (5.0 / 1024.0);
+
+  Serial.println(voltage); // Print the voltage value
+
+  // Check turbidity levels
+  if (voltage <= 2.5) {
+    Serial.println("Turbidity > 3000");
+  } else if (voltage > 2.5 && voltage <= 3) {
+    Serial.println("Turbidity b/w 30```00 - 2700");
+  } else if (voltage > 3 && voltage <= 3.5) {
+    Serial.println("Turbidity b/w 2700 - 2000");
+  } else if (voltage > 3.5 && voltage <= 4.25) {    
+    Serial.println("Turbidity b/w 2000 - 750");
+  } else if (voltage > 4.25) {
+    Serial.println("No-Turbidity");
+  } else {
+    Serial.println("Error in reading");
+  }
+
+  // PH Sensor
+  readSensorData();
+  sortBuffer();
+  float phValue = calculatePH();
+  Serial.print("    pH:");
+  Serial.print(phValue, 2);
+  Serial.println(" ");
+  digitalWrite(13, HIGH);
+  delay(800);
+  digitalWrite(13, LOW);
+
+  delay(1500); // Delay to avoid excessive serial output
+
+  // serial comm begin
+  if (mySerial.available())
+  Serial.println("\n\nAt Command: ");
+  Serial.write(mySerial.read());
+ 
+  mySerial.println("AT");
+  delay(3000);
+
+  mySerial.println("AT+SAPBR=3,1,\"Contype\",\"GPRS\"");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+SAPBR=3,1,\"APN\",\"internet\"");//APN
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+SAPBR=1,1");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+SAPBR=2,1");
+  delay(6000);
+  ShowSerialData();
+ 
+ 
+  mySerial.println("AT+HTTPINIT");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+HTTPPARA=\"CID\",1");
+  delay(6000);
+  ShowSerialData();
+
+  Serial.print("\n\n");
+
+
+  StaticJsonBuffer<200> jsonBuffer;
+  JsonObject& object = jsonBuffer.createObject();
+  
+  object.set("ph",phValue);
+  object.set("turbidity",voltage);
+  object.set("temperature",temperature);
+  object.set("conductivity",tdsValue);
+  
+  object.printTo(Serial);
+  Serial.println(" ");  
+  String sendtoserver;
+  object.prettyPrintTo(sendtoserver);
+  delay(4000);
+
+
+  // now sending to server
+  mySerial.println("AT+HTTPPARA=\"URL\",\"http://039a-41-75-183-128.ngrok-free.app/api/add_data\""); //Server address
+  delay(4000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+  delay(4000);
+  ShowSerialData();
+ 
+ 
+  mySerial.println("AT+HTTPDATA=" + String(sendtoserver.length()) + ",100000");
+  Serial.println(sendtoserver);
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println(sendtoserver);
+  delay(6000);
+  ShowSerialData;
+ 
+  mySerial.println("AT+HTTPACTION=1");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+HTTPREAD");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+HTTPTERM");
+  delay(10000);
+  ShowSerialData;
+
+}
+
+void ShowSerialData()
+{
+  while (mySerial.available() != 0)
+    Serial.write(mySerial.read());
+  delay(1000);
+ 
+}
+
+void readSensorData() {
+  for (int i = 0; i < 10; i++) {
+    buf[i] = analogRead(SensorPin);
+    delay(10);
+  }
+}
+
+void sortBuffer() {
+  for (int i = 0; i < 9; i++) {
+    for (int j = i + 1; j < 10; j++) {
+      if (buf[i] > buf[j]) {
+        temp = buf[i];
+        buf[i] = buf[j];
+        buf[j] = temp;
+      }
+    }
+  }
+}
+
+float calculatePH() {
+  avgValue = 0;
+  for (int i = 2; i < 8; i++) {
+    avgValue += buf[i];
+  }
+  float phValue = (float)avgValue * 5.0 / 1024 / 6;
+  return 3.5 * phValue;
+}
