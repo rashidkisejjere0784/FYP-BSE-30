@@ -4,10 +4,13 @@
 #include <OneWire.h> 
 #include <DallasTemperature.h>
 #include <SoftwareSerial.h> // sim module
+#include <ArduinoJson.h>
 
 #define SensorPin 8
 #define ONE_WIRE_BUS 4
 #define TdsSensorPin A0
+
+StaticJsonBuffer<200> jsonBuffer; 
 
 unsigned long int avgValue;
 float b;
@@ -23,8 +26,8 @@ GravityTDS gravityTds;
 // JSON payload builder
 String buildSensorPayload(float temperature, float phValue, float turbidityVoltage, float conductivity) {
   String payload = "{";
-  payload += "\"temp\":" + String(temperature, 2) + ",";       // 2 decimal places
-  payload += "\"pH\":" + String(phValue, 2) + ",";
+  payload += "\"temperature\":" + String(temperature, 2) + ",";       // 2 decimal places
+  payload += "\"ph\":" + String(phValue, 2) + ",";
   payload += "\"turbidity\":" + String(turbidityVoltage, 2) + ",";
   payload += "\"conductivity\":" + String(conductivity, 2);
   payload += "}";
@@ -44,6 +47,8 @@ void setup() {
   // setup sim900
   mySerial.begin(9600);
   delay(2000);
+
+   DynamicJsonBuffer jsonBuffer;
 }
 
 
@@ -97,11 +102,97 @@ void loop() {
   digitalWrite(13, LOW);
 
   delay(1500); // Delay to avoid excessive serial output
-  // setup json object to send json data to the backend
-  // need to implement conductivity sensor
-  String payload = buildSensorPayload(temperature, phValue, voltage, temperature);
-  makePostRequest(payload);
-  delay(9000);
+
+  // serial comm begin
+  if (mySerial.available())
+  Serial.println("\n\nAt Command: ");
+  Serial.write(mySerial.read());
+ 
+  mySerial.println("AT");
+  delay(3000);
+
+  mySerial.println("AT+SAPBR=3,1,\"Contype\",\"GPRS\"");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+SAPBR=3,1,\"APN\",\"internet\"");//APN
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+SAPBR=1,1");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+SAPBR=2,1");
+  delay(6000);
+  ShowSerialData();
+ 
+ 
+  mySerial.println("AT+HTTPINIT");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+HTTPPARA=\"CID\",1");
+  delay(6000);
+  ShowSerialData();
+
+  Serial.print("\n\n");
+
+
+  StaticJsonBuffer<200> jsonBuffer;
+  JsonObject& object = jsonBuffer.createObject();
+  
+  object.set("ph",phValue);
+  object.set("turbidity",voltage);
+  object.set("temperature",temperature);
+  object.set("conductivity",tdsValue);
+  
+  object.printTo(Serial);
+  Serial.println(" ");  
+  String sendtoserver;
+  object.prettyPrintTo(sendtoserver);
+  delay(4000);
+
+
+  // now sending to server
+  mySerial.println("AT+HTTPPARA=\"URL\",\"http://039a-41-75-183-128.ngrok-free.app/api/add_data\""); //Server address
+  delay(4000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+  delay(4000);
+  ShowSerialData();
+ 
+ 
+  mySerial.println("AT+HTTPDATA=" + String(sendtoserver.length()) + ",100000");
+  Serial.println(sendtoserver);
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println(sendtoserver);
+  delay(6000);
+  ShowSerialData;
+ 
+  mySerial.println("AT+HTTPACTION=1");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+HTTPREAD");
+  delay(6000);
+  ShowSerialData();
+ 
+  mySerial.println("AT+HTTPTERM");
+  delay(10000);
+  ShowSerialData;
+
+}
+
+void ShowSerialData()
+{
+  while (mySerial.available() != 0)
+    Serial.write(mySerial.read());
+  delay(1000);
+ 
 }
 
 void readSensorData() {
@@ -130,49 +221,4 @@ float calculatePH() {
   }
   float phValue = (float)avgValue * 5.0 / 1024 / 6;
   return 3.5 * phValue;
-}
-
-// Helper function for AT commands with response logging
-void sendATCommand(const String& cmd, unsigned long timeout) {
-  Serial.print("AT CMD: ");
-  Serial.println(cmd);
-  mySerial.println(cmd);
-  
-  unsigned long start = millis();
-  while (millis() - start < timeout) {
-    if (mySerial.available()) {
-      Serial.write(mySerial.read()); // Echo module responses
-    }
-  }
-}
-
-// Sending data to the backend using http
-void makePostRequest(const String jsonPayload) {
-  // Debug output
-  Serial.print("Sending JSON: ");
-  Serial.println(jsonPayload);
-
-  // Configure GPRS
-  sendATCommand("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", 1000);
-  sendATCommand("AT+SAPBR=3,1,\"APN\",\"internet\"", 1000); // Replace APN
-  sendATCommand("AT+SAPBR=1,1", 2000);
-
-  // HTTP Setup
-  sendATCommand("AT+HTTPINIT", 1000);
-  sendATCommand("AT+HTTPPARA=\"CID\",1", 500);
-  sendATCommand("AT+HTTPPARA=\"URL\",\"http://f91f-102-134-149-100.ngrok-free.app/data\"", 500);
-  sendATCommand("AT+HTTPPARA=\"CONTENT\",\"application/json\"", 500);
-  
-  // POST JSON to server
-  String dataCmd = "AT+HTTPDATA=" + String(jsonPayload.length()) + ",10000";
-  sendATCommand(dataCmd, 500);
-  sendATCommand(jsonPayload.c_str(), 2000); // Send the actual JSON
-
-  // Execute POST and read response
-  sendATCommand("AT+HTTPACTION=1", 5000);
-  sendATCommand("AT+HTTPREAD", 1000);
-
-  // Cleanup
-  sendATCommand("AT+HTTPTERM", 500);
-  sendATCommand("AT+SAPBR=0,1", 500);
 }
